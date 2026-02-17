@@ -1,7 +1,7 @@
 {
   "name": "@b4uti4gd/stamp",
-  "version": "1.0.0",
-  "description": "The framework that largely replaces the Openfl/Flash API",
+  "version": "1.0.1",
+  "description": "The B4uti4GD Game bundle framework",
   "main": "stamp.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
@@ -10,7 +10,7 @@
     "type": "git",
     "url": "git+https://github.com/B4uti4github/Stamp.git"
   },
-  "keywords": [],
+  "keywords": ["Canvas","Game Development","2D Games","Game Framework", "Game Script"],
   "author": "b4uti4gd",
   "license": "MIT",
   "type": "commonjs",

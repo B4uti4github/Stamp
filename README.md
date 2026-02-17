@@ -1,5 +1,5 @@
 # Stamp
-The framework that largely replaces the Openfl/Flash API
+The B4uti4GD Game bundle framework
 
 An tools bundle for Make games (and animations :D)
 
