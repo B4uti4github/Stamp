@@ -3,6 +3,12 @@ The framework that largely replaces the Openfl/Flash API
 
 An tools bundle for Make games (and animations :D)
 
+Every symbol is an Mini-Canvas
+and Pixyte controls it's render in the Main Canvas,
+it has their comands for scalable render
+
+Better if you use Gsap, An Audio engine like WebAudio API, Choppy or Shotty >:D
+
 Here is an Demo:
 
 ```html
@@ -28,7 +34,7 @@ Here is an Demo:
     <script>
             const app = new StampStage("myCanvas", 800, 600);
 
-            const columpio = new StampSymbol(400, 400, 300, 0);
+            const columpio = new StampSymbol(200, 400, 0, -300);
             columpio.z = 1;
 
             columpio.moveTo(100, 0);   
@@ -37,19 +43,7 @@ Here is an Demo:
 
             const cuerdaCmd = columpio.commands[1]; 
             const asientoCmd = columpio.commands[2]; 
-
-            columpio.onclick = () => {
-                console.log("¡CLICK DETECTADO!");
-                asientoCmd.r = 255; asientoCmd.g = 255; asientoCmd.b = 255;
-                columpio.isDirty = true;
-                
-                gsap.to(asientoCmd, { 
-                    r: 139, g: 69, b: 19, 
-                    duration: 0.5, 
-                    onUpdate: () => columpio.isDirty = true 
-                });
-            };
-
+            
             app.addChild(columpio);
 
             const tl = gsap.timeline({ repeat: -1, yoyo: true });
@@ -70,5 +64,4 @@ Here is an Demo:
     </script>
 </body>
 </html>
-
 ```

@@ -147,7 +147,7 @@ class Shotter {
     }
 }
 
-// Stamp and pixyte
+// Stamp and Pixyte
 
 class Pixyte {
     constructor(canvas) {
@@ -197,7 +197,6 @@ class StampSymbol {
         // EL HISTORIAL ESCALABLE: Array de comandos (aristas, bitmaps, filtros)
         this.commands = [];
         this.isDirty = true;
-        this.onclick = () => {};
     }
 
     // --- API DE COMANDOS ESCALABLES ---
@@ -227,54 +226,120 @@ class StampSymbol {
         return this;
     }
 
+    _checkAndResize() {
+        let maxX = 0, maxY = 0;
+        const padding = 20; // Margen de seguridad para que no crezca en cada micro-pixel
+
+        // Escaneamos los comandos para ver el punto más lejano
+        for (const cmd of this.commands) {
+            if(!cmd) continue;
+            if (Math.abs(cmd.x) > maxX) maxX = Math.abs(cmd.x);
+            if (Math.abs(cmd.y) > maxY) maxY = Math.abs(cmd.y);
+        }
+
+        // El tamaño necesario (doble del radio para rotaciones)
+        const neededW = (maxX * 2) + padding;
+        const shadowH = (maxY * 2) + padding;
+
+        // SOLO creamos memoria nueva si el dibujo actual supera el buffer existente
+        if (neededW > this.width || shadowH > this.height) {
+            this.width = neededW | 0;
+            this.height = shadowH | 0;
+            this.buffer = new Uint8ClampedArray(this.width * this.height * 4);
+            this.imgData = new ImageData(this.buffer, this.width, this.height);
+            // Al ser un buffer nuevo, forzamos el redibujo total
+            this.isDirty = true; 
+        }
+    }
+
+
     // --- RASTERIZADOR INTERNO (Bake de píxeles) ---
 
     updateAsset() {
-        this.buffer.fill(0); // Limpiamos el minilienzo local para re-procesar los comandos
+        // 1. Verificamos si el dibujo se sale y agrandamos la "hoja"
+        this._checkAndResize();
+        
+        // 2. Limpiamos el minilienzo (Transparencia total)
+        this.buffer.fill(0); 
+        
         let lx = 0, ly = 0;
+        const cx = this.width >> 1;
+        const cy = this.height >> 1;
+
+        // Pre-calculamos el ángulo para todos los comandos del frame
+        const angle = (this.rotation || 0) * (Math.PI / 180);
+        const cos = Math.cos(angle);
+        const sin = Math.sin(angle);
 
         for (const cmd of this.commands) {
-            if (cmd.type === 'move') {
-                lx = cmd.x; ly = cmd.y;
-            } else if (cmd.type === 'line') {
-                this._rasterizeLocalLine(lx, ly, cmd.x, cmd.y, cmd.t, cmd.r, cmd.g, cmd.b, cmd.a);
-                lx = cmd.x; ly = cmd.y;
-            } else if (cmd.type === 'bitmap') {
-                this._blit(cmd);
+            if (!cmd) continue;
+
+            if (cmd.type === 'move' || cmd.type === 'line') {
+                // --- ROTACIÓN DE VECTORES (EDGES) ---
+                // Rotamos el punto relativo al centro del buffer
+                const tx = (cmd.x * cos - cmd.y * sin + cx) | 0;
+                const ty = (cmd.x * sin + cmd.y * cos + cy) | 0;
+
+                if (cmd.type === 'move') {
+                    lx = tx; ly = ty;
+                } else {
+                    this._rasterizeLocalLine(lx, ly, tx, ty, cmd.t, cmd.r, cmd.g, cmd.b, cmd.a);
+                    lx = tx; ly = ty;
+                }
+            } 
+            else if (cmd.type === 'bitmap') {
+                // --- ROTACIÓN DE BITMAPS (BLIT PRO) ---
+                this._blit(cmd, cos, sin, cx, cy);
             }
         }
         this.isDirty = false;
     }
 
-    _blit(cmd) {
+    // Blit con Rotación por Software (Inverse Mapping)
+    _blit(cmd, cos, sin, cx, cy) {
         const src = cmd.data;
         const dest = this.buffer;
-        const sw = cmd.w, dw = this.width;
+        const sw = cmd.w, sh = cmd.h;
+        const dw = this.width, dh = this.height;
 
-        for (let iy = 0; iy < cmd.h; iy++) {
-            const dy = (cmd.y + iy) | 0;
-            if (dy < 0 || dy >= this.height) continue;
-            const destRow = dy * dw;
-            const srcRow = iy * sw;
+        // Centros locales del bitmap para rotar sobre su propio eje
+        const lCx = sw >> 1, lCy = sh >> 1;
 
-            for (let ix = 0; ix < sw; ix++) {
-                const dx = (cmd.x + ix) | 0;
-                if (dx < 0 || dx >= dw) continue;
+        // Calculamos el área de escaneo (Bounding Box de la rotación)
+        const size = (Math.sqrt(sw * sw + sh * sh)) | 0;
+        const hSize = size >> 1;
 
-                const sIdx = (srcRow + ix) << 2;
-                if (src[sIdx + 3] === 0) continue; 
+        for (let iy = 0; iy < size; iy++) {
+            // Posición Y en el lienzo del símbolo (centrado en cmd.y)
+            const py = (cmd.y + iy - hSize + cy) | 0;
+            if (py < 0 || py >= dh) continue;
+            const dRow = py * dw;
 
-                const dIdx = (destRow + dx) << 2;
+            for (let ix = 0; ix < size; ix++) {
+                const px = (cmd.x + ix - hSize + cx) | 0;
+                if (px < 0 || px >= dw) continue;
 
-                // Filtro de Máscara (Alpha Lock)
-                if (cmd.filter === 'alpha-lock') {
-                    if (dest[dIdx + 3] > 0) { // Solo si ya hay algo pintado
-                        dest[dIdx] = src[sIdx]; dest[dIdx+1] = src[sIdx+1];
-                        dest[dIdx+2] = src[sIdx+2]; dest[dIdx+3] = src[sIdx+3];
+                // Mapeo Inverso: ¿Qué píxel del asset original corresponde a este punto rotado?
+                const dx = ix - hSize;
+                const dy = iy - hSize;
+                
+                // Aplicamos la rotación inversa (cos/-sin)
+                const sx = (dx * cos + dy * sin + lCx) | 0;
+                const sy = (dy * cos - dx * sin + lCy) | 0;
+
+                if (sx >= 0 && sx < sw && sy >= 0 && sy < sh) {
+                    const sIdx = (sy * sw + sx) << 2;
+                    if (src[sIdx + 3] > 0) { // Si no es transparente
+                        const dIdx = (dRow + px) << 2;
+                        
+                        // Filtro Alpha-Lock (Opcional)
+                        if (cmd.filter === 'alpha-lock' && dest[dIdx + 3] === 0) continue;
+
+                        dest[dIdx] = src[sIdx];
+                        dest[dIdx+1] = src[sIdx+1];
+                        dest[dIdx+2] = src[sIdx+2];
+                        dest[dIdx+3] = src[sIdx+3];
                     }
-                } else {
-                    dest[dIdx] = src[sIdx]; dest[dIdx+1] = src[sIdx+1];
-                    dest[dIdx+2] = src[sIdx+2]; dest[dIdx+3] = src[sIdx+3];
                 }
             }
         }
@@ -318,7 +383,7 @@ class StampStage {
         this.renderer = new Pixyte(this.canvas);
         this.engine = new Choppy(); // <--- Choppy2D-js manda aquí
         this.shotter = new Shotter();
-
+        
         this.init();
     }
 
@@ -326,8 +391,6 @@ class StampStage {
         this.engine.addLayer(() => {
             this.renderer.render();
         }, "RENDER_LAYER");
-
-        this.canvas.addEventListener("mousedown", (e) => this.handleInput(e));
         
         this.engine.play();
     }
@@ -336,47 +399,4 @@ class StampStage {
         this.renderer.add(symbol);
         return symbol;
     }
-
-    handleInput(e) {
-        const rect = this.canvas.getBoundingClientRect();
-        const mx = e.clientX - rect.left;
-        const my = e.clientY - rect.top;
-
-        const list = this.renderer.registry;
-
-        // Buscamos de adelante hacia atrás (Z-Order)
-        for (let i = list.length - 1; i >= 0; i--) {
-            const s = list[i];
-            if (!s.exists || !s.visible || !s.onclick || s.commands.length === 0) continue;
-
-            // --- RECALCULO DINÁMICO ---
-            // Inicializamos con el primer comando
-            let first = s.commands[0];
-            let minX = first.x, maxX = first.x;
-            let minY = first.y, maxY = first.y;
-
-            // Escaneamos los "Edges" para encontrar los límites reales en este frame
-            for (let j = 1; j < s.commands.length; j++) {
-                const cmd = s.commands[j];
-                if (cmd.x < minX) minX = cmd.x;
-                if (cmd.x > maxX) maxX = cmd.x;
-                if (cmd.y < minY) minY = cmd.y;
-                if (cmd.y > maxY) maxY = cmd.y;
-            }
-
-            // Aplicamos la escala y la posición global del símbolo
-            const sc = s.scale || 1;
-            const realXMin = s.x + (minX * sc);
-            const realXMax = s.x + (maxX * sc);
-            const realYMin = s.y + (minY * sc);
-            const realYMax = s.y + (maxY * sc);
-
-            // HIT-TEST de precisión
-            if (mx >= realXMin && mx <= realXMax && my >= realYMin && my <= realYMax) {
-                s.onclick();
-                break; // Solo clickeamos el objeto que está más arriba
-            }
-        }
-    }
-
 }
